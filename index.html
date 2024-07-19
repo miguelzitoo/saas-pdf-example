@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap">
+    <title>PDF Editor Online</title>
+<style>
+    body {
+        font-family: 'Roboto', sans-serif;
+        background-color: #f0f0f0;
+        margin: 0;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }   
+    #pdf-container {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: 1200px;
+        margin: 20px auto;
+    }
+
+    canvas {
+        border: 1px solid #ddd;
+        margin: 10px;
+        box-shadow: 0px 4px 8px rgba(0,0,0,0.1);
+        border-radius: 5px;
+    }
+    #toolbar {
+        background-color: #fff;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: center;
+    }
+
+    button, input[type="file"] {
+        background-color: #4C4F50;
+        border: none;
+        color: white;
+        padding: 10px 20px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border-radius: 5px;
+        transition: background-color 0.3s;
+    }
+    button:hover {
+        background-color: #45a049;
+    }
+    input[type="color"]{
+        width: 50px;
+        height: 50px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: none;
+        cursor: pointer;
+    }
+    input[type="range"]{
+        width: 100px;
+        margin: 0 10px;
+    }
+    #text-input, #edit-text-input{
+        padding: 10px;
+        font-size: 16px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+    }
+    #edit-text-input {
+        display: none;
+        position: absolute;
+        z-index: 1000;
+
+    }
+    #save-btn:hover{
+        background-color: #007b9a;
+    }
+    #sidebar {
+        position:fixed;
+        right: 0;
+        top: 0;
+        width: 200px;
+        height: 100%;
+        background-color: #f0f0f0;
+        padding: 20px;
+        box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+        overflow-y: auto;
+    }
+    #drawings-list {
+        list-style-type: none;
+        padding: 0;
+    }
+
+    #drawings-list li {
+        cursor: pointer;
+        padding: 5px;
+        margin-bottom: 10px;
+        background-color: #fff;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+    #drawings li canvas {
+        max-width: 100%;
+        height: auto;
+        border: 1px solid #eee;
+    }
+    
+</style>
+
+</head>
+<body>
+<h1>PDF Editor</h1>
+<input type="file" id="pdf-upload" accept=".pdf">
+<div id="toolbar" style="display: none;">
+    <button id="draw-btn">Draw</button>
+    <input type="color" id="color-picker" value="#000000">
+    <input type="range" id="brush-size" value="5" min="1" max="50">
+    <button id="add-text-btn">Add text</button>
+    <input type="text" id="text-input" style="display: none;">
+</div>
+<div id="pdf-container"></div>
+<button id="save-btn" style="display: none;">Save PDF</button>
+<input type="text" id="edit-text-input">
+
+<div id="sidebar">
+    <h3>Saved Drawings</h3>
+    <ul id="drawings-list"></ul>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+
+<script>
+function initApp() {
+    let fabricCanvases = [];
+    let isDrawingMode = false;
+    let isAddingText = false;
+    let activeTextObject = null;
+    let currentCanvas = null;
+    let savedDrawings = JSON.parse(localStorage.getItem('savedDrawings')) || [];
+    const drawingsList = document.getElementById('drawings-list');
+    const drawBtn = document.getElementById('draw-btn');
+    const colorPicker = document.getElementById('color-picker');
+    const brushSize = document.getElementById('brush-size');
+    const addTextBtn = document.getElementById('add-text-btn');
+    const textInput = document.getElementById('text-input');
+    const editTextInput = document.getElementById('edit-text-input');
+
+    function updateDrawingsList() {
+        drawingsList.innerHTML = '';
+        savedDrawings.forEach((drawing, index) => {
+            const li = document.createElement('li');
+            const canvas = document.createElement('canvas');
+            canvas.width = 100;
+            canvas.height = 100;
+            li.appendChild(canvas);
+
+            renderThumbnail(canvas, drawing);
+
+            li.addEventListener('click', () => addDrawingToPDF(drawing));
+            drawingsList.appendChild(li);
+        });
+    }
+
+    function renderThumbnail(canvas, drawing) {
+        const ctx = canvas.getContext('2d');
+        const tempCanvas = new fabric.StaticCanvas(null, {
+            width: drawing.width,
+
+        });
+
+        tempCanvas.loadfromJSON(drawing, function() {
+            tempCanvas.renderAll();
+            const scaleFactor = Math.min(canvas.width / drawing.width, canvas.height / drawing.height);
+            ctx.scale(scaleFactor, scaleFactor);
+            ctx.drawImage(tempCanvas.getElement(), 0, 0);
+        });
+    }
+
+    function saveDrawing(canvas) {
+        const drawing = canvas.toJSON(['id']);
+        savedDrawings.push(drawing);
+        localStorage.setItem('savedDrawings', JSON.stringify(savedDrawings));
+        updateDrawingsList();
+    }
+
+    function addDrawingToPDF(drawing) {
+        if (currentCanvas) {
+            fabric.util.enlivenObjects(drawing.objects, (objects) => {
+                objects.forEach(obj => {
+                    currentCanvas.add(obj);
+
+                });
+                currentCanvas.renderAll();
+            })
+        } else {
+            console.error("Sem atividade de Canvas, por favor carregue seu pdf primeiro")
+        }
+    }
+
+    document.getElementById('pdf-upload').addEventListener('change', function(e) {
+        const file = e.target.file[0];
+        const formData = new formData();
+        formData.append('file', file);
+
+        fetch('/upload', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('pdf-container');
+            container.innerHTML = '';
+            fabricCanvases = [];
+
+            data.images.forEach((imgStr, pageIndex) => {
+                const canvas = document.createElement('canvas');
+                container.appendChild(canvas);
+                const fabricCanvas = new fabric.Canvas(canvas);
+                fabricCanvases.push(fabricCanvas);
+
+                fabric.Image.fromURL(imgStr, function(img) {
+                    fabricCanvas.setWidth(img.width);
+                    fabricCanvas.setHeigth(img.height);
+                    fabricCanvas.setBackgroundImage(img, fabricCanvas.renderAll.bind(fabricCanvas));
+
+                    const pageTexts = data.texts[pageIndex];
+
+                    for(let i = 0; i < pageTexts.text.length, i++;) {
+                        if (pageTexts.text[i].trim() !== '') {
+                            const text = new fabric.Textbox(pageTexts.text[i], {
+                                left: pageTexts.left[i],
+                                top: pageTexts.top[i],
+                                width: pageTexts.width[i],
+                                height: pageTexts.height[i],
+                                fontSize: pageTexts.fontSize[i],
+                                fill: 'rgba(0,0,0,0)',
+                                selectable: true,
+                                editable: true
+                            });
+                            fabricCanvas.add(text);
+                        }
+                    }
+                    fabricCanvas.renderAll();
+                });
+                fabricCanvas.on('mouse:dbclick', handleDoubleClick);
+                fabricCanvas.on('mouse:down', function() {
+                    currentCanvas = fabricCanvas;   
+                });
+
+            });
+
+            document.getElementById('toolbar').style.display = 'flex';
+            document.getElementById('save-btn').style.display = 'block';
+            currentCanvas = fabricCanvases[0];
+            updateDrawingsList();
+        });
+    });
+    
+    function handleDoubleClick(opt) {
+        if (opt.target && opt.target.type === 'textbox') {
+            opt.target.set ({
+                fill:'black',
+                backgrundColor: 'rgba(255,255,255,0,5)'
+            });
+
+            opt.target.enterEditing();
+            opt.target.selectAll();
+            opt.target.canvas.renderAll();
+        }
+    }
+
+    drawBtn.addEventListener('click', function() {
+        isDrawingMode = !isDrawingMode;
+        drawBtn.textContent = isDrawingMode ? 'Stop Drawing' : 'Draw';
+        fabricCanvases.forEach(canvas => {
+            canvas.isDrawingMode = isDrawingMode;
+            canvas.freeDrawingBrush.color = colorPicker.value;
+            canvas.freeDrawingBrush.width = parseInt(BrushSize.value, 10);
+
+        });
+
+        if (!isDrawingMode && currentCanvas) {
+            saveDrawing(currentCanvas);
+        }
+    });
+
+    colorPicker.addEventListener('change', function() {
+        fabricCanvases.forEach(canvas => {
+            canvas.freeDrawingBrush.color = colorPicker.value;
+        });
+    });
+
+    brushSize.addEventListener('input', function() {
+        fabricCanvases.forEach(canvas => {
+            canvas.freeDrawingBrush.width = parseInt(brushSize.value, 10);
+        });
+    });
+
+    addTextBtn.addEventListener('click', function(){
+        isAddingText = !isAddingText;
+        addTextBtn.textContent = isAddingText ? 'Cancel text' : 'Add Text';
+        textInput.style.display = isAddingText ? 'inline' : 'none';
+
+        if (!isAddingText) {
+            textInput.value = '';
+        }
+
+        fabricCanvases.forEach(canvas => {
+            if(isAddingText) {
+                canvas.on('mouse:down', function(opt) {
+                    currentCanvas = canvas;
+                    addText(opt);
+                });
+            } else {
+                canvas.off('mouse:down');
+            }
+        });
+    });
+
+    function addText(opt){
+        if (currentCanvas) {
+            const text = new fabric.Textbox(textInput.value, {
+                left: opt.pointer.x,
+                top: opt.pointer.y,
+                fill: colorPicker.value,
+                width: 200
+            });
+
+            currentCanvas.add(text);
+            currentCanvas.renderAll();
+            isAddingText = false;
+            addTextBtn.textContent = 'Add Text';
+            textInput.style.display = 'none';
+            textInput.value= '';
+            fabricCanvases.forEach(canvas => canvas.off('mouse:down'));
+        } else {
+            console.error("Sem atividade de desenho encontradas")
+        }
+    }
+
+    document.getElementById('save-btn').addEventListener('click', function() {
+        const images = fabricCanvases.map(canvas => canvas.toDataURL());
+        Fetch('/save', {
+            method: 'POST',
+            Headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({images : images}),
+        })
+
+        .then(response => response.blob())
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');  
+            a.href = url;
+            a.download = 'edited.pdf';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        });
+    });
+
+    editTextInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            if(activeTextObject && editTextInput.value){
+                activeTextObject.set('text',editTextInput.value);
+                activeTextObject.canvas.renderAll();
+                hideEditTextInput();
+            }
+        }
+    });
+
+    editTextInput.addEventListener('blur', function(){
+        if(activeTextObject && editTextInput.value) {
+            activeTextObject.set('text', editTextInput.value);
+            activeTextObject.canvas.renderAll();
+        }
+        hideEditTextInput();
+    });
+
+    function showEditTextInput(x, y, text) {
+        const containerRect = document.getElementById('pdf-container').getBoundingClientRect();
+        editTextInput.style.left = (containerRect.left + x) + 'px';
+        editTextInput.style.top = (containerRect.top + y) + 'px';
+        editTextInput.value = text;
+        editTextInput.style.display = 'block';
+        editTextInput.focus();
+    }
+
+    function hideEditTextInput() {
+        editTextInput.style.display = 'none';
+        editTextInput.value = '';
+        activeTextObject = null;
+    }
+
+    updateDrawingsList();
+}
+
+if (typeof fabric !== 'undefined') {
+    initApp();
+} else {
+    window.addEventListener('load', function() {
+        if (typeof fabric !== 'undefined') {
+            initApp();
+        }
+        else {
+            console.error('Fabric.js não foi carregado corretamente');
+        }
+    });
+}
+    
+</script>
+</body>
+</html>
